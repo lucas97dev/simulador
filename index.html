@@ -1,336 +1,476 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simulador - Consórcio vs Financiamento</title>
+import React, { useState, useMemo } from 'react';
+import { 
+  LineChart, Line, AreaChart, Area, 
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer 
+} from 'recharts';
+import { Home, Car, Truck, PieChart, Landmark, Info, Printer } from 'lucide-react';
+
+const formatCurrency = (value) => {
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value || 0);
+};
+
+export default function App() {
+  // --- STATE: Consórcio ---
+  const [tipo, setTipo] = useState('imovel'); // imovel, automovel, pesado
+  
+  const [cCredito, setCCredito] = useState(300000);
+  const [cPrazo, setCPrazo] = useState(200);
+  const [cTaxaAdm, setCTaxaAdm] = useState(18.9);
+  const [cFundoReserva, setCFundoReserva] = useState(2.0);
+  const [cRedutor, setCRedutor] = useState(25);
+  const [cReajusteAnual, setCReajusteAnual] = useState(3.0);
+  
+  const [cAdesaoPct, setCAdesaoPct] = useState(1.0);
+  const [cAdesaoParcelas, setCAdesaoParcelas] = useState(3);
+  
+  const [cMesLance, setCMesLance] = useState(36);
+  const [cLanceProprio, setCLanceProprio] = useState(100000);
+  const [cLanceEmbutidoPct, setCLanceEmbutidoPct] = useState(0);
+  const [cOpcaoPos, setCOpcaoPos] = useState('reduzir_parcela');
+  const [cSeguroVida, setCSeguroVida] = useState(true);
+
+  // --- STATE: Financiamento ---
+  const [fValorBem, setFValorBem] = useState(230000);
+  const [fEntrada, setFEntrada] = useState(46000);
+  const [fPrazo, setFPrazo] = useState(200);
+  const [fJurosAnual, setFJurosAnual] = useState(10.5);
+  const [fSistema, setFSistema] = useState('SAC');
+
+  // --- MATH & LOGIC ---
+  const simulationData = useMemo(() => {
+    // 1. Setup Consórcio
+    let cartaAtual = Number(cCredito);
+    let saldoDevedorC = cartaAtual * (1 + Number(cTaxaAdm) / 100 + Number(cFundoReserva) / 100);
+    let cotaMensalBase = saldoDevedorC / Number(cPrazo);
     
-    <!-- Bibliotecas essenciais para rodar o React e Gráficos no navegador -->
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/recharts/umd/Recharts.js"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
+    let lanceEmbutidoReal = cartaAtual * (Number(cLanceEmbutidoPct) / 100);
+    let adesaoTotal = tipo === 'imovel' ? cartaAtual * (Number(cAdesaoPct) / 100) : 0;
+    let adesaoMensal = adesaoTotal > 0 ? adesaoTotal / Number(cAdesaoParcelas) : 0;
+    
+    let dadosConsorcio = [];
+    let totalPagoC = 0;
+    let creditoLiberadoC = cartaAtual;
+    let parcelaInicialC = 0;
+    let parcelaPosC = 0;
+    
+    let mesesRestantesC = Number(cPrazo);
+    let limiteMesesC = Number(cPrazo);
 
-    <style>
-        body { background-color: #f8fafc; }
-        @media print {
-            .no-print { display: none !important; }
-            .print-full { width: 100% !important; max-width: 100% !important; margin: 0 !important; }
-            body { background-color: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-            .print-break-avoid { page-break-inside: avoid; }
+    for (let i = 1; i <= limiteMesesC; i++) {
+      // Reajuste Anual (INCC/IPCA)
+      if (i === 14 || (i > 14 && (i - 14) % 12 === 0)) {
+        let fator = 1 + (Number(cReajusteAnual) / 100);
+        cartaAtual *= fator;
+        saldoDevedorC *= fator;
+        cotaMensalBase *= fator;
+      }
+
+      let seguroMensalC = cSeguroVida ? saldoDevedorC * 0.00038 : 0;
+      let pAdesaoC = (tipo === 'imovel' && i <= Number(cAdesaoParcelas)) ? adesaoMensal : 0;
+      let isContemplado = i >= Number(cMesLance);
+      let parcelaMesC = 0;
+
+      // Lance na Contemplação
+      if (i === Number(cMesLance)) {
+        let abatimento = Number(cLanceProprio) + lanceEmbutidoReal;
+        saldoDevedorC -= abatimento;
+        creditoLiberadoC = cartaAtual - lanceEmbutidoReal;
+        
+        if (saldoDevedorC < 0) saldoDevedorC = 0;
+
+        if (cOpcaoPos === 'reduzir_parcela') {
+          cotaMensalBase = saldoDevedorC / mesesRestantesC;
+        } else {
+          // Reduzir prazo
+          let mesesQuitados = Math.floor(abatimento / cotaMensalBase);
+          limiteMesesC -= mesesQuitados;
+          mesesRestantesC -= mesesQuitados;
         }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
+      }
 
-    <script type="text/babel">
-        const { useState, useMemo, useEffect } = React;
-        const { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } = Recharts;
+      if (!isContemplado) {
+        parcelaMesC = (cotaMensalBase * (1 - Number(cRedutor) / 100)) + seguroMensalC + pAdesaoC;
+      } else {
+        parcelaMesC = cotaMensalBase + seguroMensalC + pAdesaoC;
+      }
 
-        const App = () => {
-            useEffect(() => {
-                if(window.lucide) {
-                    window.lucide.createIcons();
-                }
-            });
+      if (saldoDevedorC <= 0) {
+        parcelaMesC = 0;
+        saldoDevedorC = 0;
+        if (i > Number(cMesLance)) break;
+      } else {
+        saldoDevedorC -= cotaMensalBase;
+        if (saldoDevedorC < 0) saldoDevedorC = 0;
+      }
 
-            // ESTADOS CONSÓRCIO
-            const [tipo, setTipo] = useState('imovel');
-            const [creditoC, setCreditoC] = useState(300000);
-            const [prazoC, setPrazoC] = useState(200);
-            const [ta, setTa] = useState(18.90);
-            const [fr, setFr] = useState(2.00);
-            const [redutor, setRedutor] = useState(25);
-            const [reajusteAnual, setReajusteAnual] = useState(3.0);
-            const [temSeguro, setTemSeguro] = useState(true); // O SEGURO AGORA PODE SER DESMARCADO
-            
-            // Adesão (Apenas Imóvel)
-            const [adesaoPct, setAdesaoPct] = useState(1.0);
-            const [adesaoParcelas, setAdesaoParcelas] = useState(3);
+      if (i === 1) parcelaInicialC = parcelaMesC;
+      if (i === Number(cMesLance)) parcelaPosC = parcelaMesC;
 
-            // Contemplação
-            const [mesContemplacao, setMesContemplacao] = useState(36);
-            const [lanceProprio, setLanceProprio] = useState(100000);
-            const [lanceEmbutidoPct, setLanceEmbutidoPct] = useState(0);
-            const [opcaoPos, setOpcaoPos] = useState('reduzir_parcela');
-            
-            // ESTADOS FINANCIAMENTO
-            const [valorBemF, setValorBemF] = useState(230000);
-            const [entradaF, setEntradaF] = useState(46000);
-            const [prazoF, setPrazoF] = useState(360);
-            const [jurosAnualF, setJurosAnualF] = useState(10.5);
-            const [sistemaF, setSistemaF] = useState('SAC');
+      if (parcelaMesC > 0) {
+        totalPagoC += parcelaMesC;
+        dadosConsorcio.push({
+          mes: i,
+          parcelaC: parcelaMesC,
+          saldoC: saldoDevedorC,
+        });
+      }
+      mesesRestantesC--;
+    }
 
-            const resultConsorcio = useMemo(() => {
-                let cartaAtual = Number(creditoC);
-                let saldoDevedor = cartaAtual * (1 + Number(ta)/100 + Number(fr)/100);
-                let cotaMensalBase = saldoDevedor / Number(prazoC);
-                let lanceEmbutidoReal = cartaAtual * (Number(lanceEmbutidoPct)/100);
-                let adesaoTotal = tipo === 'imovel' ? cartaAtual * (Number(adesaoPct)/100) : 0;
-                let adesaoMensal = adesaoTotal > 0 ? adesaoTotal / Number(adesaoParcelas) : 0;
-                
-                let dados = [];
-                let totalPago = 0;
-                let creditoLiberado = cartaAtual;
-                let parcelaInicial = 0;
-                let parcelaPos = 0;
-                let mesesRestantes = Number(prazoC);
-                let limiteMeses = Number(prazoC);
-                
-                for (let i = 1; i <= limiteMeses; i++) {
-                    // Reajuste Anual INCC/IPCA
-                    if (i === 14 || (i > 14 && (i - 14) % 12 === 0)) {
-                        let fator = 1 + (Number(reajusteAnual)/100);
-                        cartaAtual *= fator;
-                        saldoDevedor *= fator;
-                        cotaMensalBase *= fator;
-                    }
+    // 2. Setup Financiamento
+    let financiado = Number(fValorBem) - Number(fEntrada);
+    let saldoDevedorF = financiado;
+    let jm = Math.pow(1 + Number(fJurosAnual) / 100, 1 / 12) - 1;
+    
+    let dadosFinanciamento = [];
+    let totalPagoF = Number(fEntrada);
+    let parcelaInicialF = 0;
+    
+    let pmt = 0;
+    if (fSistema === 'PRICE') {
+      pmt = financiado * (jm * Math.pow(1 + jm, Number(fPrazo))) / (Math.pow(1 + jm, Number(fPrazo)) - 1);
+    }
 
-                    // Seguro de vida habilitado ou desabilitado
-                    let seguroMensal = temSeguro ? (saldoDevedor * 0.00038) : 0;
-                    let pAdesao = (tipo === 'imovel' && i <= Number(adesaoParcelas)) ? adesaoMensal : 0;
-                    let isContemplado = i >= Number(mesContemplacao);
-                    let parcelaMes = 0;
+    for (let i = 1; i <= Number(fPrazo); i++) {
+      let juros = saldoDevedorF * jm;
+      let amortizacao = 0;
+      let parcelaF = 0;
 
-                    if (i === Number(mesContemplacao)) {
-                        let abatimento = Number(lanceProprio) + lanceEmbutidoReal;
-                        saldoDevedor -= abatimento;
-                        creditoLiberado = cartaAtual - lanceEmbutidoReal;
-                        if(saldoDevedor < 0) saldoDevedor = 0;
-                        
-                        if (opcaoPos === 'reduzir_parcela') {
-                            cotaMensalBase = saldoDevedor / mesesRestantes;
-                        } else {
-                            let mesesQuitados = Math.floor(abatimento / cotaMensalBase);
-                            limiteMeses -= mesesQuitados;
-                            mesesRestantes -= mesesQuitados;
-                        }
-                    }
+      if (fSistema === 'SAC') {
+        amortizacao = financiado / Number(fPrazo);
+        parcelaF = amortizacao + juros;
+      } else {
+        parcelaF = pmt;
+        amortizacao = parcelaF - juros;
+      }
 
-                    if (!isContemplado) {
-                        parcelaMes = (cotaMensalBase * (1 - Number(redutor)/100)) + seguroMensal + pAdesao;
-                    } else {
-                        parcelaMes = cotaMensalBase + seguroMensal + pAdesao;
-                    }
+      saldoDevedorF -= amortizacao;
+      if (saldoDevedorF < 0) saldoDevedorF = 0;
 
-                    if (saldoDevedor <= 0) {
-                        parcelaMes = 0;
-                        saldoDevedor = 0;
-                        if(i > Number(mesContemplacao)) break;
-                    } else {
-                        saldoDevedor -= cotaMensalBase; 
-                        if (saldoDevedor < 0) saldoDevedor = 0;
-                    }
+      if (i === 1) parcelaInicialF = parcelaF;
+      totalPagoF += parcelaF;
 
-                    if (i === 1) parcelaInicial = parcelaMes;
-                    if (i === Number(mesContemplacao)) parcelaPos = parcelaMes;
-                    
-                    if (parcelaMes > 0) {
-                        totalPago += parcelaMes;
-                        dados.push({ mes: i, parcelaC: parcelaMes, saldoC: saldoDevedor });
-                    }
-                    mesesRestantes--;
-                }
-                
-                return { dados, totalPago, creditoLiberado, parcelaInicial, parcelaPos, prazoReal: dados.length };
-            }, [tipo, creditoC, prazoC, ta, fr, redutor, reajusteAnual, adesaoPct, adesaoParcelas, mesContemplacao, lanceProprio, lanceEmbutidoPct, opcaoPos, temSeguro]);
+      dadosFinanciamento.push({
+        mes: i,
+        parcelaF: parcelaF,
+        saldoF: saldoDevedorF,
+      });
+    }
 
-            const resultFinanciamento = useMemo(() => {
-                let financiado = Number(valorBemF) - Number(entradaF);
-                let saldoDevedor = financiado;
-                let jm = Math.pow(1 + Number(jurosAnualF)/100, 1/12) - 1; 
-                let dados = [];
-                let totalPago = Number(entradaF);
-                let parcelaInicial = 0;
-                let pmt = 0;
-                
-                if (sistemaF === 'PRICE') {
-                    pmt = financiado * (jm * Math.pow(1 + jm, Number(prazoF))) / (Math.pow(1 + jm, Number(prazoF)) - 1);
-                }
+    // 3. Mesclar dados para o gráfico
+    const maxMeses = Math.max(dadosConsorcio.length, dadosFinanciamento.length);
+    const chartData = [];
+    for (let i = 0; i < maxMeses; i++) {
+      chartData.push({
+        mes: i + 1,
+        parcelaC: dadosConsorcio[i]?.parcelaC || 0,
+        parcelaF: dadosFinanciamento[i]?.parcelaF || 0,
+        saldoC: dadosConsorcio[i]?.saldoC || 0,
+        saldoF: dadosFinanciamento[i]?.saldoF || 0,
+      });
+    }
 
-                for (let i = 1; i <= Number(prazoF); i++) {
-                    let juros = saldoDevedor * jm;
-                    let amortizacao = 0;
-                    let parcela = 0;
+    return {
+      chartData,
+      summaryC: { totalPago: totalPagoC, creditoLiberado: creditoLiberadoC, parcelaInicial: parcelaInicialC, parcelaPos: parcelaPosC, prazoReal: dadosConsorcio.length },
+      summaryF: { totalPago: totalPagoF, parcelaInicial: parcelaInicialF, prazoReal: dadosFinanciamento.length }
+    };
+  }, [tipo, cCredito, cPrazo, cTaxaAdm, cFundoReserva, cRedutor, cReajusteAnual, cAdesaoPct, cAdesaoParcelas, cMesLance, cLanceProprio, cLanceEmbutidoPct, cOpcaoPos, fValorBem, fEntrada, fPrazo, fJurosAnual, fSistema]);
 
-                    if (sistemaF === 'SAC') {
-                        amortizacao = financiado / Number(prazoF);
-                        parcela = amortizacao + juros;
-                    } else {
-                        parcela = pmt;
-                        amortizacao = parcela - juros;
-                    }
+  const { chartData, summaryC, summaryF } = simulationData;
 
-                    saldoDevedor -= amortizacao;
-                    if(saldoDevedor < 0) saldoDevedor = 0;
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-white p-4 border border-slate-200 rounded-lg shadow-xl text-sm">
+          <p className="font-bold text-slate-700 mb-2">Mês {label}</p>
+          {payload.map((entry, index) => (
+            <div key={index} className="flex items-center gap-2 my-1">
+              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color }} />
+              <span className="text-slate-600">{entry.name}:</span>
+              <span className="font-semibold text-slate-800">{formatCurrency(entry.value)}</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    return null;
+  };
 
-                    if (i === 1) parcelaInicial = parcela;
-                    totalPago += parcela;
+  const handlePrint = () => {
+    window.print();
+  };
 
-                    dados.push({ mes: i, parcelaF: parcela, saldoF: saldoDevedor });
-                }
-                return { dados, totalPago, parcelaInicial };
-            }, [valorBemF, entradaF, prazoF, jurosAnualF, sistemaF]);
+  return (
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 flex flex-col md:flex-row">
+      <style>{`
+        @media print {
+          .no-print { display: none !important; }
+          .print-full { width: 100% !important; max-width: 100% !important; margin: 0 !important; }
+          body { background-color: white !important; }
+          .print-break-avoid { page-break-inside: avoid; }
+        }
+      `}</style>
 
-            const maxMeses = Math.max(resultConsorcio.dados.length, resultFinanciamento.dados.length);
-            const chartData = [];
-            for (let i = 0; i < maxMeses; i++) {
-                chartData.push({
-                    mes: i + 1,
-                    parcelaC: resultConsorcio.dados[i]?.parcelaC || 0,
-                    parcelaF: resultFinanciamento.dados[i]?.parcelaF || 0,
-                    saldoC: resultConsorcio.dados[i]?.saldoC || 0,
-                    saldoF: resultFinanciamento.dados[i]?.saldoF || 0,
-                });
-            }
+      {/* SIDEBAR */}
+      <aside className="w-full md:w-96 bg-white border-r border-slate-200 flex-shrink-0 flex flex-col h-auto md:h-screen overflow-y-auto shadow-sm z-10 no-print">
+        <div className="p-6 border-b border-slate-100 bg-slate-800 text-white sticky top-0 z-20 flex justify-between items-center">
+          <div>
+            <h1 className="text-xl font-bold flex items-center gap-2">
+              <PieChart className="w-6 h-6 text-emerald-400" />
+              Comparador
+            </h1>
+            <p className="text-xs text-slate-400 mt-1">Consórcio vs Financiamento</p>
+          </div>
+          <button onClick={handlePrint} className="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
+            <Printer className="w-5 h-5" />
+          </button>
+        </div>
 
-            const formatCurrency = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+        <div className="p-6 space-y-6">
+          {/* Categoria */}
+          <div>
+            <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Categoria</h2>
+            <div className="flex gap-2">
+              <button onClick={() => setTipo('imovel')} className={`flex-1 flex flex-col items-center gap-2 p-3 rounded-xl border transition-all ${tipo === 'imovel' ? 'bg-emerald-50 border-emerald-500 text-emerald-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500'}`}>
+                <Home className="w-5 h-5" />
+                <span className="text-xs font-semibold">Imóveis</span>
+              </button>
+              <button onClick={() => setTipo('automovel')} className={`flex-1 flex flex-col items-center gap-2 p-3 rounded-xl border transition-all ${tipo === 'automovel' ? 'bg-emerald-50 border-emerald-500 text-emerald-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500'}`}>
+                <Car className="w-5 h-5" />
+                <span className="text-xs font-semibold">Autos</span>
+              </button>
+              <button onClick={() => setTipo('pesado')} className={`flex-1 flex flex-col items-center gap-2 p-3 rounded-xl border transition-all ${tipo === 'pesado' ? 'bg-emerald-50 border-emerald-500 text-emerald-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500'}`}>
+                <Truck className="w-5 h-5" />
+                <span className="text-xs font-semibold">Pesados</span>
+              </button>
+            </div>
+          </div>
 
-            return (
-                <div className="min-h-screen p-4 md:p-8">
-                    <div className="max-w-7xl mx-auto space-y-6">
-                        <header className="flex flex-col md:flex-row justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-slate-200 no-print">
-                            <div className="flex items-center gap-4">
-                                <div className="p-3 bg-blue-100 text-blue-700 rounded-xl">
-                                    <i data-lucide="bar-chart-3" className="w-8 h-8"></i>
-                                </div>
-                                <div>
-                                    <h1 className="text-2xl font-bold text-slate-800">Comparador Estratégico</h1>
-                                    <p className="text-slate-500">Consórcio Porto Seguro vs Financiamento</p>
-                                </div>
-                            </div>
-                            <div className="mt-4 md:mt-0">
-                                <button onClick={() => window.print()} className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-xl font-medium flex items-center gap-2 transition-all">
-                                    <i data-lucide="printer" className="w-5 h-5"></i> Gerar PDF
-                                </button>
-                            </div>
-                        </header>
+          {/* Consórcio */}
+          <div className="space-y-4">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-emerald-600 flex items-center gap-2 border-b pb-2">
+              <PieChart className="w-4 h-4" /> Parâmetros Consórcio
+            </h2>
+            <InputGroup label="Crédito Contratado (R$)" value={cCredito} setter={setCCredito} />
+            <div className="grid grid-cols-2 gap-4">
+              <InputGroup label="Prazo (meses)" value={cPrazo} setter={setCPrazo} />
+              <InputGroup label="Redutor Pré (%)" value={cRedutor} setter={setCRedutor} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <InputGroup label="Taxa Adm (%)" value={cTaxaAdm} setter={setCTaxaAdm} step="0.1" />
+              <InputGroup label="F. Reserva (%)" value={cFundoReserva} setter={setCFundoReserva} step="0.1" />
+            </div>
 
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                            
-                            <div className="lg:col-span-4 space-y-6 no-print">
-                                <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
-                                    <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Categoria</h2>
-                                    <div className="flex gap-2">
-                                        {[ { id: 'imovel', label: 'Imóveis' }, { id: 'automovel', label: 'Autos' }, { id: 'pesado', label: 'Pesados' } ].map(t => (
-                                            <button key={t.id} onClick={() => setTipo(t.id)} className={`flex-1 p-2 text-xs font-semibold rounded-xl border ${tipo === t.id ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'bg-white border-slate-200 text-slate-500'}`}>{t.label}</button>
-                                        ))}
-                                    </div>
-                                </div>
+            <div className="flex items-center gap-2 mt-2 mb-2">
+              <input
+                type="checkbox"
+                id="seguroVida"
+                checked={cSeguroVida}
+                onChange={(e) => setCSeguroVida(e.target.checked)}
+                className="w-4 h-4 text-emerald-600 bg-slate-50 border-slate-300 rounded focus:ring-emerald-500 cursor-pointer"
+              />
+              <label htmlFor="seguroVida" className="text-xs font-medium text-slate-600 cursor-pointer select-none">
+                Incluir Seguro de Vida (0,038% a.m.)
+              </label>
+            </div>
 
-                                <div className="bg-white p-5 rounded-2xl shadow-sm border border-emerald-100">
-                                    <h2 className="font-bold text-lg text-emerald-600 mb-4">Parâmetros do Consórcio</h2>
-                                    <div className="space-y-4 text-sm">
-                                        <div><label className="block text-slate-600 mb-1">Crédito Contratado (R$)</label><input type="number" value={creditoC} onChange={e => setCreditoC(e.target.value)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg" /></div>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div><label className="block text-slate-600 mb-1">Prazo (meses)</label><input type="number" value={prazoC} onChange={e => setPrazoC(e.target.value)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg" /></div>
-                                            <div><label className="block text-slate-600 mb-1">Redutor %</label><input type="number" value={redutor} onChange={e => setRedutor(e.target.value)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg" /></div>
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div><label className="block text-slate-600 mb-1">Taxa Adm. Total %</label><input type="number" step="0.01" value={ta} onChange={e => setTa(e.target.value)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg" /></div>
-                                            <div><label className="block text-slate-600 mb-1">Fundo Reserva %</label><input type="number" step="0.01" value={fr} onChange={e => setFr(e.target.value)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg" /></div>
-                                        </div>
-                                        
-                                        <label className="flex items-center gap-2 mt-4 cursor-pointer">
-                                            <input type="checkbox" checked={temSeguro} onChange={(e) => setTemSeguro(e.target.checked)} className="w-4 h-4 text-emerald-600 border-slate-300 rounded focus:ring-emerald-500" />
-                                            <span className="text-sm font-medium text-slate-700">Incluir Seguro de Vida (0,038%)</span>
-                                        </label>
-
-                                        {tipo === 'imovel' && (
-                                            <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl space-y-3 mt-4">
-                                                <p className="text-xs font-semibold text-amber-800">Taxa de Adesão (Imóveis)</p>
-                                                <div className="grid grid-cols-2 gap-4">
-                                                    <div><label className="block text-amber-900 mb-1">% Adesão</label><input type="number" step="0.1" value={adesaoPct} onChange={e => setAdesaoPct(e.target.value)} className="w-full p-2 bg-white border border-amber-300 rounded-lg" /></div>
-                                                    <div><label className="block text-amber-900 mb-1">Pagar em (x)</label>
-                                                        <select value={adesaoParcelas} onChange={e => setAdesaoParcelas(e.target.value)} className="w-full p-2 bg-white border border-amber-300 rounded-lg"><option value="1">1 mês</option><option value="3">3 meses</option><option value="6">6 meses</option><option value="12">12 meses</option></select>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        <hr className="border-slate-100 my-4" />
-                                        <h3 className="font-semibold text-emerald-800">Contemplação</h3>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div><label className="block text-slate-600 mb-1">Mês Lance</label><input type="number" value={mesContemplacao} onChange={e => setMesContemplacao(e.target.value)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg" /></div>
-                                            <div><label className="block text-slate-600 mb-1">Reajuste Anual %</label><input type="number" step="0.1" value={reajusteAnual} onChange={e => setReajusteAnual(e.target.value)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg" /></div>
-                                        </div>
-                                        <div><label className="block text-slate-600 mb-1">Lance Próprio (R$)</label><input type="number" value={lanceProprio} onChange={e => setLanceProprio(e.target.value)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg" /></div>
-                                        <div><label className="block text-slate-600 mb-1">Lance Embutido (%)</label><input type="number" value={lanceEmbutidoPct} onChange={e => setLanceEmbutidoPct(e.target.value)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg" /></div>
-                                        <div><label className="block text-slate-600 mb-1">Opção Pós</label><select value={opcaoPos} onChange={e => setOpcaoPos(e.target.value)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg"><option value="reduzir_parcela">Reduzir Parcela</option><option value="reduzir_prazo">Reduzir Prazo</option></select></div>
-                                    </div>
-                                </div>
-
-                                <div className="bg-white p-5 rounded-2xl shadow-sm border border-violet-100">
-                                    <h2 className="font-bold text-lg text-violet-600 mb-4">Parâmetros Financiamento</h2>
-                                    <div className="space-y-4 text-sm">
-                                        <div><label className="block text-slate-600 mb-1">Valor Total (R$)</label><input type="number" value={valorBemF} onChange={e => setValorBemF(e.target.value)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg" /></div>
-                                        <div><label className="block text-slate-600 mb-1">Entrada (R$)</label><input type="number" value={entradaF} onChange={e => setEntradaF(e.target.value)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg" /></div>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div><label className="block text-slate-600 mb-1">Prazo (meses)</label><input type="number" value={prazoF} onChange={e => setPrazoF(e.target.value)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg" /></div>
-                                            <div><label className="block text-slate-600 mb-1">Sistema</label><select value={sistemaF} onChange={e => setSistemaF(e.target.value)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg"><option value="SAC">SAC</option><option value="PRICE">Price</option></select></div>
-                                        </div>
-                                        <div><label className="block text-slate-600 mb-1">Juros (Anual %)</label><input type="number" step="0.1" value={jurosAnualF} onChange={e => setJurosAnualF(e.target.value)} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg" /></div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="lg:col-span-8 space-y-6 print-full">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div className="bg-gradient-to-br from-emerald-50 to-white p-6 rounded-2xl shadow-sm border border-emerald-100 print-break-avoid">
-                                        <div className="flex justify-between items-start mb-4">
-                                            <div><h3 className="text-emerald-800 font-bold text-lg">Consórcio</h3><p className="text-emerald-600/80 text-sm">Líquido: {formatCurrency(resultConsorcio.creditoLiberado)}</p></div>
-                                            <span className="px-3 py-1 bg-emerald-200 text-emerald-800 text-xs font-bold rounded-full">{resultConsorcio.prazoReal} meses</span>
-                                        </div>
-                                        <div className="space-y-4">
-                                            <div><p className="text-xs text-slate-500 uppercase">Desembolso Total</p><p className="text-2xl font-black text-emerald-700">{formatCurrency(resultConsorcio.totalPago)}</p></div>
-                                            <div className="grid grid-cols-2 gap-2 pt-3 border-t border-emerald-100">
-                                                <div><p className="text-xs text-slate-500">Parcela Inicial</p><p className="font-bold text-slate-700">{formatCurrency(resultConsorcio.parcelaInicial)}</p></div>
-                                                <div><p className="text-xs text-slate-500">Pós-Contemplação</p><p className="font-bold text-slate-700">{formatCurrency(resultConsorcio.parcelaPos)}</p></div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="bg-gradient-to-br from-violet-50 to-white p-6 rounded-2xl shadow-sm border border-violet-100 print-break-avoid">
-                                        <div className="flex justify-between items-start mb-4">
-                                            <div><h3 className="text-violet-800 font-bold text-lg">Financiamento</h3><p className="text-violet-600/80 text-sm">Bem: {formatCurrency(valorBemF)}</p></div>
-                                            <span className="px-3 py-1 bg-violet-200 text-violet-800 text-xs font-bold rounded-full">{prazoF} meses</span>
-                                        </div>
-                                        <div className="space-y-4">
-                                            <div><p className="text-xs text-slate-500 uppercase">Total (c/ entrada)</p><p className="text-2xl font-black text-violet-700">{formatCurrency(resultFinanciamento.totalPago)}</p></div>
-                                            <div className="grid grid-cols-2 gap-2 pt-3 border-t border-violet-100">
-                                                <div><p className="text-xs text-slate-500">Parcela Inicial</p><p className="font-bold text-slate-700">{formatCurrency(resultFinanciamento.parcelaInicial)}</p></div>
-                                                <div><p className="text-xs text-slate-500">Entrada</p><p className="font-bold text-slate-700">{formatCurrency(entradaF)}</p></div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 print-break-avoid">
-                                    <h3 className="text-lg font-bold text-slate-800 mb-6">Evolução do Valor da Parcela</h3>
-                                    <div className="h-72">
-                                        <ResponsiveContainer width="100%" height="100%">
-                                            <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 20 }}>
-                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                                                <XAxis dataKey="mes" tick={{fontSize: 12}} stroke="#94a3b8" />
-                                                <YAxis tickFormatter={(val) => `R$ ${val/1000}k`} tick={{fontSize: 12}} stroke="#94a3b8" />
-                                                <Tooltip formatter={(val) => formatCurrency(val)} labelFormatter={(lbl) => `Mês ${lbl}`} />
-                                                <Legend />
-                                                <Line type="monotone" dataKey="parcelaC" name="Consórcio" stroke="#10b981" strokeWidth={3} dot={false} />
-                                                <Line type="monotone" dataKey="parcelaF" name="Financiamento" stroke="#8b5cf6" strokeWidth={3} dot={false} />
-                                            </LineChart>
-                                        </ResponsiveContainer>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+            {tipo === 'imovel' && (
+              <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 space-y-3">
+                <p className="text-xs font-semibold text-amber-800 uppercase flex items-center gap-1">
+                  <Info className="w-3 h-3"/> Taxa de Adesão
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <InputGroup label="Adesão (%)" value={cAdesaoPct} setter={setCAdesaoPct} step="0.1" />
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Pagar em (x)</label>
+                    <select className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-sm outline-none" value={cAdesaoParcelas} onChange={(e) => setCAdesaoParcelas(e.target.value)}>
+                      <option value="1">1 mês</option>
+                      <option value="3">3 meses</option>
+                      <option value="6">6 meses</option>
+                      <option value="12">12 meses</option>
+                    </select>
+                  </div>
                 </div>
-            );
-        };
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+              </div>
+            )}
+
+            <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-100 space-y-3">
+              <p className="text-xs font-semibold text-emerald-800 uppercase">Contemplação & Reajuste</p>
+              <div className="grid grid-cols-2 gap-3">
+                <InputGroup label="Mês do Lance" value={cMesLance} setter={setCMesLance} />
+                <InputGroup label="Reajuste A. (%)" value={cReajusteAnual} setter={setCReajusteAnual} step="0.1" />
+              </div>
+              <InputGroup label="Lance Próprio (R$)" value={cLanceProprio} setter={setCLanceProprio} />
+              <InputGroup label="Lance Embutido (%)" value={cLanceEmbutidoPct} setter={setCLanceEmbutidoPct} />
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Opção Pós-Lance</label>
+                <select className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-sm outline-none" value={cOpcaoPos} onChange={(e) => setCOpcaoPos(e.target.value)}>
+                  <option value="reduzir_parcela">Reduzir Parcela</option>
+                  <option value="reduzir_prazo">Reduzir Prazo</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Financiamento */}
+          <div className="space-y-4">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-purple-600 flex items-center gap-2 border-b pb-2">
+              <Landmark className="w-4 h-4" /> Parâmetros Financiamento
+            </h2>
+            <InputGroup label="Valor do Bem (R$)" value={fValorBem} setter={setFValorBem} />
+            <InputGroup label="Entrada (R$)" value={fEntrada} setter={setFEntrada} />
+            <div className="grid grid-cols-2 gap-4">
+              <InputGroup label="Prazo (meses)" value={fPrazo} setter={setFPrazo} />
+              <InputGroup label="Juros Anual (%)" value={fJurosAnual} setter={setFJurosAnual} step="0.1" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Sistema</label>
+              <select className="w-full bg-slate-50 border border-slate-200 rounded-md px-3 py-2 text-sm outline-none" value={fSistema} onChange={(e) => setFSistema(e.target.value)}>
+                <option value="SAC">SAC</option>
+                <option value="PRICE">PRICE</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {/* MAIN CONTENT */}
+      <main className="flex-1 h-screen overflow-y-auto p-6 lg:p-8 print-full">
+        <div className="max-w-6xl mx-auto space-y-6">
+          
+          {/* Header Print Only */}
+          <div className="hidden print:block mb-8 pb-4 border-b border-slate-200">
+            <h1 className="text-2xl font-bold text-slate-800">Comparativo Estratégico</h1>
+            <p className="text-slate-500">Consórcio Porto Seguro vs Financiamento Bancário</p>
+          </div>
+
+          {/* Cards de Resumo */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 print-break-avoid">
+            {/* Consórcio Card */}
+            <div className="bg-gradient-to-br from-emerald-50 to-white p-6 rounded-2xl shadow-sm border border-emerald-200">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h3 className="text-emerald-800 font-bold text-lg">Consórcio</h3>
+                  <p className="text-emerald-600/80 text-sm">Crédito Lib.: {formatCurrency(summaryC.creditoLiberado)}</p>
+                </div>
+                <span className="px-3 py-1 bg-emerald-200 text-emerald-800 text-xs font-bold rounded-full">{summaryC.prazoReal} meses</span>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <p className="text-xs text-slate-500 uppercase tracking-wide">Desembolso Total</p>
+                  <p className="text-3xl font-black text-emerald-700">{formatCurrency(summaryC.totalPago)}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-2 pt-4 border-t border-emerald-100">
+                  <div>
+                    <p className="text-xs text-slate-500">Parcela Inicial</p>
+                    <p className="font-bold text-slate-700 text-lg">{formatCurrency(summaryC.parcelaInicial)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Pós-Contemplação</p>
+                    <p className="font-bold text-slate-700 text-lg">{formatCurrency(summaryC.parcelaPos)}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Financiamento Card */}
+            <div className="bg-gradient-to-br from-purple-50 to-white p-6 rounded-2xl shadow-sm border border-purple-200">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h3 className="text-purple-800 font-bold text-lg">Financiamento</h3>
+                  <p className="text-purple-600/80 text-sm">Valor do Bem: {formatCurrency(fValorBem)}</p>
+                </div>
+                <span className="px-3 py-1 bg-purple-200 text-purple-800 text-xs font-bold rounded-full">{summaryF.prazoReal} meses</span>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <p className="text-xs text-slate-500 uppercase tracking-wide">Desembolso Total (c/ entrada)</p>
+                  <p className="text-3xl font-black text-purple-700">{formatCurrency(summaryF.totalPago)}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-2 pt-4 border-t border-purple-100">
+                  <div>
+                    <p className="text-xs text-slate-500">Parcela Inicial</p>
+                    <p className="font-bold text-slate-700 text-lg">{formatCurrency(summaryF.parcelaInicial)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Entrada</p>
+                    <p className="font-bold text-slate-700 text-lg">{formatCurrency(fEntrada)}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Gráficos */}
+          <div className="grid grid-cols-1 gap-6">
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 print-break-avoid">
+              <h3 className="text-base font-bold text-slate-800 mb-6">Evolução do Valor da Parcela (Mensal)</h3>
+              <div className="h-80 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis dataKey="mes" tick={{fontSize: 12, fill: '#64748b'}} />
+                    <YAxis tickFormatter={(val) => `R$ ${(val/1000).toFixed(0)}k`} tick={{fontSize: 12, fill: '#64748b'}} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                    <Line type="stepAfter" dataKey="parcelaC" name="Parcela Consórcio" stroke="#10b981" strokeWidth={3} dot={false} />
+                    <Line type="monotone" dataKey="parcelaF" name="Parcela Financiamento" stroke="#9333ea" strokeWidth={3} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 print-break-avoid">
+              <h3 className="text-base font-bold text-slate-800 mb-6">Amortização do Saldo Devedor</h3>
+              <div className="h-80 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 20 }}>
+                    <defs>
+                      <linearGradient id="colorCons" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                      </linearGradient>
+                      <linearGradient id="colorFin" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#9333ea" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#9333ea" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis dataKey="mes" tick={{fontSize: 12, fill: '#64748b'}} />
+                    <YAxis tickFormatter={(val) => `R$ ${(val/1000).toFixed(0)}k`} tick={{fontSize: 12, fill: '#64748b'}} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                    <Area type="monotone" dataKey="saldoC" name="SD Consórcio" stroke="#10b981" fill="url(#colorCons)" strokeWidth={2} />
+                    <Area type="monotone" dataKey="saldoF" name="SD Financiamento" stroke="#9333ea" fill="url(#colorFin)" strokeWidth={2} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+// Subcomponents
+function InputGroup({ label, value, setter, step = "1" }) {
+  return (
+    <div>
+      <label className="block text-xs font-medium text-slate-500 mb-1">{label}</label>
+      <input
+        type="number"
+        step={step}
+        className="w-full bg-slate-50 border border-slate-200 text-slate-800 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-shadow"
+        value={value}
+        onChange={(e) => setter(Number(e.target.value))}
+      />
+    </div>
+  );
+}
